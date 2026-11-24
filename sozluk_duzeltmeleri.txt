@@ -1,0 +1,26 @@
+# Kelime eklemek için satıra +kelime yaz.
+# Kelime çıkarmak için satıra -kelime yaz.
+# Her satıra bir kelime yaz. Kaydedip oyunu yeniden aç.
+-EHLI
++SÖMEK
++BATUM
++GOLEM
++YARRAK
++DARMA
++DARLAMA
++LARA
++ONAM
++PASLAMA
++ŞİLİ
++EMİLİM
++BALİ
++ODİN
++DİNİ
++İNİM
++TENS
++ALEZ
++SAYAR
++PERU
++KADİFELİ
++PATARA
++TAO
