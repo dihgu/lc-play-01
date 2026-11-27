@@ -1,0 +1,511 @@
+
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Laf Cambazı</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  background: #edf4f1;
+  color: #162c26;
+  font-family: Helvetica, Arial, sans-serif;
+  max-width: 480px;
+  margin: 30px auto;
+  padding: 16px;
+  text-align: center;
+}
+button, input, select {
+  font: inherit;
+  padding: 10px;
+  border: 1px solid #a8c5ba;
+  border-radius: 6px;
+}
+button { cursor: pointer; }
+#board {
+  display: grid;
+  gap: 5px;
+  margin: 20px 0;
+}
+.tile {
+  aspect-ratio: 1;
+  padding: 0;
+  background: #d9e8e3;
+  color: #162c26;
+  font-size: clamp(16px, 5vw, 28px);
+  font-weight: bold;
+  border: none;
+}
+.tile.selected {
+  background: #17584c;
+  color: white;
+}
+#timer { font-size: 30px; font-weight: bold; }
+#word { width: 100%; text-align: center; }
+#status { min-height: 40px; }
+#words {
+  text-align: left;
+  max-height: 240px;
+  overflow: auto;
+}
+</style>
+</head>
+<body>
+
+<h1>Laf Cambazı</h1>
+
+<select id="size">
+  <option value="4">4 × 4</option>
+  <option value="6">6 × 6</option>
+  <option value="8">8 × 8</option>
+</select>
+
+<button id="start" disabled>Başla</button>
+
+<p id="timer">2:00</p>
+<strong>Puan: <span id="score">0</span></strong>
+
+<div id="board"></div>
+
+<form id="form">
+  <input id="word" placeholder="Kelime yaz..."
+         autocomplete="off" disabled>
+  <p>
+    <button type="button" id="rotate" disabled>Çevir</button>
+    <button type="submit" id="send" disabled>Gönder</button>
+  </p>
+</form>
+
+<p id="status">Sözlük yükleniyor...</p>
+<div id="words"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+const weights = {
+  A:12,E:9,İ:8,I:6,N:6,R:6,L:6,K:5,
+  M:5,T:5,U:5,Y:5,O:4,S:4,B:3,D:3,
+  H:3,P:3,Ç:2,Ö:2,Ü:2,G:2,Z:2,
+  Ş:1,V:1,C:1,F:1,J:1,Ğ:1
+};
+
+const pool = Object.entries(weights)
+  .map(([letter, weight]) => letter.repeat(weight))
+  .join("");
+
+const normalize = word => word.trim()
+  .normalize("NFC")
+  .toLocaleUpperCase("tr-TR")
+  .replace(/Â/g,"A")
+  .replace(/Î/g,"I")
+  .replace(/Û/g,"U");
+
+const dictionary = new Set(
+  "KİTAP KALE KİT KATİP KATAR MORAL ORAL PARE PİTA PİT MEN MERA PERA SAREN SEREN İTAL KİP MOR KİRAL LİMAN LAF CAMBAZ KELİME OYUN TAHTA HARF SÜRE PUAN".split(" ")
+);
+
+let board = [], path = [], found = new Set();
+let score = 0, size = 4, deadline = 0;
+let timer, active = false;
+
+async function loadDictionary() {
+  try {
+    const response = await fetch("sozluk.txt");
+    if (!response.ok) throw new Error();
+    const text = await response.text();
+
+    text.split(/\r?\n/).forEach(line => {
+      const word = normalize(line);
+      if (/^\p{L}{3,}$/u.test(word))
+        dictionary.add(word);
+    });
+
+    const edits = await fetch("sozluk_duzeltmeleri.txt");
+    if (edits.ok) {
+      (await edits.text()).split(/\r?\n/).forEach(line => {
+        line = line.trim();
+        const word = normalize(line.slice(1));
+        if (!/^\p{L}{3,}$/u.test(word)) return;
+        if (line[0] === "+") dictionary.add(word);
+        if (line[0] === "-") dictionary.delete(word);
+      });
+    }
+
+    $("status").textContent = "Tahta boyutunu seçip Başla’ya bas.";
+    $("start").disabled = false;
+  } catch {
+    $("status").textContent = "Sözlük yüklenemedi. Yerel sunucuyu kontrol et.";
+  }
+}
+
+function neighbors(a, b) {
+  return a !== b &&
+    Math.abs(Math.floor(a/size)-Math.floor(b/size)) <= 1 &&
+    Math.abs(a%size-b%size) <= 1;
+}
+
+function render() {
+  $("board").style.gridTemplateColumns = `repeat(${size},1fr)`;
+  $("board").replaceChildren();
+
+  board.forEach((letter, index) => {
+    const tile = document.createElement("button");
+    tile.className = "tile" +
+      (path.includes(index) ? " selected" : "");
+    tile.textContent = letter;
+    tile.onclick = () => choose(index);
+    $("board").append(tile);
+  });
+}
+
+function choose(index) {
+  if (!isActive()) return;
+
+  if (path.at(-1) === index) {
+    path.pop();
+  } else if (path.includes(index)) {
+    $("status").textContent = "Her kareyi bir kez kullanabilirsin.";
+    return;
+  } else if (path.length && !neighbors(path.at(-1),index)) {
+    $("status").textContent = "Komşu bir harf seç.";
+    return;
+  } else {
+    path.push(index);
+  }
+
+  $("word").value = path.map(i => board[i]).join("");
+  render();
+}
+
+function canForm(word) {
+  function search(index, position, used) {
+    if (board[index] !== word[position]) return false;
+    if (position === word.length-1) return true;
+
+    used.add(index);
+    for (let i=0; i<board.length; i++) {
+      if (!used.has(i) && neighbors(index,i)) {
+        if (search(i,position+1,used)) return true;
+      }
+    }
+    used.delete(index);
+    return false;
+  }
+
+  return board.some((letter,i) => search(i,0,new Set()));
+}
+
+function controls(playing) {
+  $("start").disabled = playing;
+  $("size").disabled = playing;
+  $("word").disabled = !playing;
+  $("rotate").disabled = !playing;
+  $("send").disabled = !playing;
+}
+
+function duration() {
+  return Number($("size").value) === 8 ? 150 : 120;
+}
+
+
+function showTime(seconds) {
+  $("timer").textContent =
+    Math.floor(seconds/60) + ":" +
+    String(seconds%60).padStart(2,"0");
+}
+
+function start() {
+  size = Number($("size").value);
+  board = Array.from({length:size*size},
+    () => pool[Math.floor(Math.random()*pool.length)]);
+
+  path = [];
+  found.clear();
+  score = 0;
+  $("score").textContent = score;
+  $("words").replaceChildren();
+  $("word").value = "";
+  $("status").textContent =
+    `En az ${size===4?3:4} harfli bir kelime bul.`;
+
+  active = true;
+  deadline = Date.now() + duration()*1000;
+  controls(true);
+  render();
+  tick();
+  timer = setInterval(tick,100);
+}
+
+function tick() {
+  const seconds = Math.max(0,
+    Math.ceil((deadline-Date.now())/1000));
+  showTime(seconds);
+  if (!seconds) finish();
+}
+
+function isActive() {
+  if (active && Date.now() >= deadline) finish();
+  return active;
+}
+
+function finish() {
+  if (!active) return;
+  active = false;
+  clearInterval(timer);
+  controls(false);
+  showTime(0);
+  $("status").textContent = "Süre doldu!";
+
+  const prefixes = new Set();
+  const candidates = new Set();
+  const letters = new Set(board);
+
+  for (const word of dictionary) {
+    if (word.length < (size===4?3:4) ||
+        word.length > board.length ||
+        ![...word].every(c=>letters.has(c))) continue;
+
+    candidates.add(word);
+    for (let i=1;i<word.length;i++)
+      prefixes.add(word.slice(0,i));
+  }
+
+  const missed = new Set();
+
+  function search(index,prefix,used) {
+    const word = prefix + board[index];
+    if (candidates.has(word) && !found.has(word))
+      missed.add(word);
+
+    if (!prefixes.has(word)) return;
+    used.add(index);
+
+    for (let i=0;i<board.length;i++) {
+      if (!used.has(i) && neighbors(index,i))
+        search(i,word,used);
+    }
+    used.delete(index);
+  }
+
+  board.forEach((_,i)=>search(i,"",new Set()));
+
+  const heading = document.createElement("h3");
+  heading.textContent = `Bulamadıkların (${missed.size})`;
+  $("words").append(heading);
+
+  [...missed].sort((a,b)=>a.localeCompare(b,"tr"))
+    .forEach(word=>addResult(word));
+}
+
+function addResult(text) {
+  const row = document.createElement("div");
+  row.textContent = text;
+  $("words").append(row);
+}
+
+function submit(event) {
+  event.preventDefault();
+  if (!isActive()) return;
+
+  const word = normalize($("word").value);
+  if (!word) return;
+
+  let result;
+
+  if (word.length < (size===4?3:4))
+    result = "Çok kısa";
+  else if (found.has(word))
+    result = "Tekrar";
+  else if (!dictionary.has(word))
+    result = "Sözlükte yok";
+  else if (!canForm(word))
+    result = "Tahtada yok";
+  else {
+    found.add(word);
+    score += word.length;
+    $("score").textContent = score;
+    result = `+${word.length} puan`;
+  }
+
+  addResult(`${word} · ${result}`);
+  $("status").textContent = `${word} · ${result}`;
+  $("word").value = "";
+  path = [];
+  render();
+}
+
+function rotate() {
+  if (!isActive()) return;
+  const rotated = Array(board.length);
+
+  const transform = i =>
+    (i%size)*size + size-1-Math.floor(i/size);
+
+  board.forEach((letter,i)=>{
+    rotated[transform(i)] = letter;
+  });
+
+  path = path.map(transform);
+  board = rotated;
+  render();
+}
+
+$("start").onclick = start;
+$("rotate").onclick = rotate;
+$("form").onsubmit = submit;
+$("size").onchange = () => showTime(duration());
+$("word").oninput = () => {
+  path = [];
+  render();
+};
+
+document.addEventListener("keydown",event=>{
+  if ((event.metaKey || event.ctrlKey) &&
+      event.key.toLowerCase()==="r" && active) {
+    event.preventDefault();
+    rotate();
+  }
+  if (event.key==="Escape" && active) {
+    path = [];
+    $("word").value = "";
+    render();
+  }
+});
+
+loadDictionary();
+</script>
+
+<style>
+body {
+  max-width: 850px;
+}
+
+#game-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 480px) minmax(0, 300px);
+  gap: 24px;
+  align-items: start;
+  margin-top: 20px;
+}
+
+#word-panel {
+  background: #d9e8e3;
+  border-radius: 10px;
+  padding: 16px;
+  text-align: left;
+}
+
+#word-panel h3 {
+  margin-top: 0;
+}
+
+#words {
+  max-height: 480px;
+  overflow-y: auto;
+  line-height: 1.8;
+}
+
+#rotate small {
+  display: block;
+  font-size: 11px;
+  opacity: 0.65;
+  margin-top: 3px;
+}
+
+@media (max-width: 650px) {
+  #game-layout {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  #words {
+    max-height: 240px;
+  }
+}
+</style>
+
+<script>
+const layout = document.createElement("div");
+layout.id = "game-layout";
+
+const gamePanel = document.createElement("div");
+const wordPanel = document.createElement("aside");
+wordPanel.id = "word-panel";
+
+$("board").before(layout);
+
+layout.append(gamePanel, wordPanel);
+
+gamePanel.append(
+  $("board"),
+  $("form"),
+  $("status")
+);
+
+wordPanel.innerHTML = "<h3>Gönderilen kelimeler</h3>";
+wordPanel.append($("words"));
+
+$("rotate").innerHTML = "Çevir<small>opt+R</small>";
+
+duration = function() {
+  return Number($("size").value) === 8 ? 150 : 120;
+};
+
+showTime(duration());
+
+document.addEventListener("keydown", event => {
+  if (event.altKey && event.code === "KeyR" && active) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    rotate();
+  }
+
+  if ((event.metaKey || event.ctrlKey) &&
+      event.code === "KeyR") {
+    event.stopImmediatePropagation();
+  }
+}, true);
+</script>
+
+<style>
+#rotate, #send {
+  width: 110px;
+  height: 58px;
+}
+
+#send small {
+  display: block;
+  font-size: 11px;
+  opacity: 0.65;
+  margin-top: 3px;
+}
+</style>
+
+<script>
+$("send").innerHTML = "Gönder<small>enter</small>";
+
+controls = function(playing) {
+  $("start").disabled = false;
+  $("size").disabled = false;
+  $("word").disabled = !playing;
+  $("rotate").disabled = !playing;
+  $("send").disabled = !playing;
+
+  $("start").textContent = playing
+    ? "Yeniden başla"
+    : "Başla";
+};
+
+$("start").onclick = function() {
+  clearInterval(timer);
+  start();
+};
+
+$("size").onchange = function() {
+  if (!active) showTime(duration());
+};
+</script>
+
+</body>
+</html>
