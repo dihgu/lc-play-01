@@ -507,5 +507,112 @@ $("size").onchange = function() {
 };
 </script>
 
+<style>
+#words {
+  font-size: 12px;
+  line-height: 1.4;
+  height: 380px;
+  overflow-y: auto;
+  overflow-anchor: none;
+}
+
+#words div {
+  padding: 2px 0;
+}
+
+#end-banner {
+  background: #b3261e;
+  color: white;
+  padding: 12px;
+  border-radius: 6px;
+  font-weight: bold;
+  margin: 12px 0;
+}
+
+#end-banner[hidden] {
+  display: none;
+}
+
+@media (max-width: 650px) {
+  #words {
+    height: 220px;
+  }
+}
+</style>
+
+<script>
+const endBanner = document.createElement("div");
+endBanner.id = "end-banner";
+endBanner.hidden = true;
+$("board").before(endBanner);
+
+const originalStart = start;
+
+start = function() {
+  endBanner.hidden = true;
+  originalStart();
+  $("word").focus();
+};
+
+const originalAddResult = addResult;
+
+addResult = function(text) {
+  originalAddResult(text);
+  if (active) {
+    $("words").scrollTop = $("words").scrollHeight;
+  }
+};
+
+const originalFinish = finish;
+
+finish = function() {
+  if (!active) return;
+
+  originalFinish();
+
+  const heading = $("words").querySelector("h3");
+  const missedCount = heading
+    ? Number(heading.textContent.match(/\d+/)?.[0] || 0)
+    : 0;
+
+  endBanner.textContent =
+    `Süre doldu! ${found.size} kelime buldun.`;
+
+  endBanner.hidden = false;
+
+  const summary = document.createElement("p");
+  summary.style.fontWeight = "bold";
+  summary.textContent =
+    `Bulduğun: ${found.size} · Bulamadığın: ${missedCount}`;
+
+  $("words").prepend(summary);
+  $("words").scrollTop = 0;
+};
+
+$("rotate").innerHTML = "Çevir<small>tab</small>";
+
+document.addEventListener("keydown", event => {
+  if (active && event.key === "Tab" && !event.shiftKey) {
+    event.preventDefault();
+    rotate();
+    $("word").focus();
+  }
+}, true);
+
+$("rotate").onclick = function() {
+  rotate();
+  $("word").focus();
+};
+
+$("form").onsubmit = function(event) {
+  submit(event);
+  if (active) $("word").focus();
+};
+
+$("board").addEventListener("click", () => {
+  if (active) $("word").focus();
+});
+</script>
+
 </body>
 </html>
